@@ -3,6 +3,23 @@ import type { GeneInfo } from "@/data/genes";
 import { getAlphaFoldUrls } from "@/data/genes";
 import type { Mutation } from "@/data/mutations";
 
+interface HoveredResidue {
+  resname: string;
+  resno: number;
+  chainname: string;
+  plddt: number;
+  mutation?: Mutation;
+  x: number;
+  y: number;
+}
+
+function interpretPLDDT(plddt: number): "high" | "confident" | "low" | "very low" {
+  if (plddt > 90) return "high";
+  if (plddt > 70) return "confident";
+  if (plddt > 50) return "low";
+  return "very low";
+}
+
 interface ProteinViewerProps {
   gene: GeneInfo;
   mutations: Mutation[];
@@ -15,15 +32,14 @@ const ProteinViewer = ({ gene, mutations, showMutations }: ProteinViewerProps) =
   const mutationRepsRef = useRef<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hoveredMutation, setHoveredMutation] = useState<Mutation | null>(null);
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const [hoveredResidue, setHoveredResidue] = useState<HoveredResidue | null>(null);
 
   const loadStructure = useCallback(async () => {
     if (!containerRef.current) return;
 
     setLoading(true);
     setError(null);
-    setHoveredMutation(null);
+    setHoveredResidue(null);
     mutationRepsRef.current = [];
 
     if (stageRef.current) {
@@ -85,20 +101,25 @@ const ProteinViewer = ({ gene, mutations, showMutations }: ProteinViewerProps) =
       stage.signals.hovered.removeAll();
       stage.signals.hovered.add((pickingProxy: any) => {
         if (!pickingProxy?.atom) {
-          setHoveredMutation(null);
+          setHoveredResidue(null);
           return;
         }
 
-        const resno = pickingProxy.atom.resno;
+        const atom = pickingProxy.atom;
+        const resno = atom.resno;
+        const resname = atom.resname;
+        const chainname = atom.chainname;
+        const plddt = atom.bfactor; // AlphaFold stores pLDDT in bfactor column
+
         const found = mutations.find((m) => m.position === resno);
-        if (!found) {
-          setHoveredMutation(null);
-          return;
-        }
-
         const mouse = pickingProxy.mouse?.position;
-        setHoveredMutation(found);
-        setTooltipPos({
+
+        setHoveredResidue({
+          resname,
+          resno,
+          chainname,
+          plddt,
+          mutation: found,
           x: mouse?.x ?? 0,
           y: mouse?.y ?? 0,
         });
@@ -159,17 +180,43 @@ const ProteinViewer = ({ gene, mutations, showMutations }: ProteinViewerProps) =
 
       <div ref={containerRef} className="h-full min-h-[500px] w-full" />
 
-      {hoveredMutation && showMutations && (
+      {hoveredResidue && (
         <div
-          className="pointer-events-none absolute z-20 rounded-md border border-primary/30 bg-card px-3 py-2"
-          style={{ left: tooltipPos.x + 15, top: tooltipPos.y - 10 }}
+          className="pointer-events-none absolute z-20 rounded-md border bg-card px-3 py-2 shadow-sm"
+          style={{ 
+            left: hoveredResidue.x + 15, 
+            top: hoveredResidue.y - 10,
+            borderColor: 
+              hoveredResidue.plddt > 90 ? 'hsl(var(--confidence-high))' :
+              hoveredResidue.plddt > 70 ? 'hsl(var(--confidence-medium))' : 
+              'hsl(var(--confidence-low))'
+          }}
         >
-          <p className="font-mono text-sm font-semibold text-primary">{hoveredMutation.label}</p>
-          <p className="text-xs text-muted-foreground">Position: {hoveredMutation.position}</p>
-          <p className="text-xs text-muted-foreground">
-            {hoveredMutation.wildType} → {hoveredMutation.mutant}
-          </p>
-          <p className="text-xs text-foreground">{hoveredMutation.cancerType}</p>
+          <div className="flex flex-col gap-1">
+            <p className="font-mono text-sm font-semibold text-foreground">
+              {hoveredResidue.resname} {hoveredResidue.resno}
+              {hoveredResidue.chainname ? ` (Chain ${hoveredResidue.chainname})` : ''}
+            </p>
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              Confidence: 
+              <span className={
+                hoveredResidue.plddt > 90 ? "text-confidence-high font-medium" :
+                hoveredResidue.plddt > 70 ? "text-confidence-medium" : "text-confidence-low"
+              }>
+                {interpretPLDDT(hoveredResidue.plddt).charAt(0).toUpperCase() + interpretPLDDT(hoveredResidue.plddt).slice(1)}
+              </span>
+            </p>
+            {hoveredResidue.mutation && (
+              <div className="mt-1 pt-1 border-t border-border/50">
+                <p className="font-mono text-xs font-semibold text-primary">
+                  Mutation: {hoveredResidue.mutation.label}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  {hoveredResidue.mutation.cancerType}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
